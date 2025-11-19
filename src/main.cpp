@@ -4,160 +4,166 @@
 #include <Adafruit_GC9A01A.h>
 #include <esp_system.h>
 
-// Passe die Pins an deine Verdrahtung an.
-constexpr int TFT_CS = 5;
-constexpr int TFT_DC = 16;
-constexpr int TFT_RST = 17;
-constexpr int TFT_SCLK = 18; //SCL-Pin
-constexpr int TFT_MOSI = 23; //SDA-Pin
-constexpr int BUTTON_PIN = 4;  // Taste zwischen Pin und GND, interner Pull-up aktiv
+const int PIN_TFT_CS = 5;
+const int PIN_TFT_DC = 16;
+const int PIN_TFT_RST = 17;
+const int PIN_TFT_SCLK = 18;
+const int PIN_TFT_MOSI = 23;
+const int PIN_BUTTON = 4;
 
-constexpr int DICE_SIZE = 160;
-constexpr int DICE_CORNER_RADIUS = 24;
-constexpr int DICE_DOT_RADIUS = 14;
-constexpr uint16_t SCREEN_BG = GC9A01A_RED;
-constexpr uint16_t DICE_FILL_COLOR = GC9A01A_WHITE;
-constexpr uint16_t DICE_BORDER_COLOR = GC9A01A_WHITE;
-constexpr uint16_t DICE_DOT_COLOR = GC9A01A_BLACK;
-constexpr uint8_t ROLL_STEPS = 18;
-constexpr uint16_t FRAME_DELAY_START_MS = 70;
-constexpr uint16_t FRAME_DELAY_MID_MS = 280;
-constexpr uint16_t FINAL_STEP_DELAYS_MS[3] = {460, 720, 1000};
+const int DICE_SIZE = 160;
+const int DICE_CORNER_RADIUS = 24;
+const int DICE_DOT_RADIUS = 14;
+const uint16_t COLOR_BG = GC9A01A_RED;
+const uint16_t COLOR_DICE = GC9A01A_WHITE;
+const uint16_t COLOR_DICE_BORDER = GC9A01A_WHITE;
+const uint16_t COLOR_DICE_DOT = GC9A01A_BLACK;
 
-struct DiceDotOffset {
-  int8_t dx;
-  int8_t dy;
-};
+const int DICE_STEPS = 20;
+const int FAST_DELAY_MS = 60;
+const int MEDIUM_DELAY_MS = 200;
+const int SLOW_DELAY_1_MS = 400;
+const int SLOW_DELAY_2_MS = 650;
+const int SLOW_DELAY_3_MS = 950;
 
-constexpr DiceDotOffset kDiceDotOffsets[] = {
-    {0, 0},   // center
-    {-1, -1}, // top-left
-    {1, -1},  // top-right
-    {-1, 0},  // middle-left
-    {1, 0},   // middle-right
-    {-1, 1},  // bottom-left
-    {1, 1}    // bottom-right
-};
+Adafruit_GC9A01A tft(PIN_TFT_CS, PIN_TFT_DC, PIN_TFT_RST);
+bool showPromptScreen = true;
+int gridCenterX = 0;
+int gridCenterY = 0;
+int gridStep = 0;
 
-constexpr uint8_t kFaceDotCounts[] = {1, 2, 3, 4, 5, 6};
-
-constexpr uint8_t kFaceDotIndices[6][6] = {
-    {0, 0, 0, 0, 0, 0},  // 1 //0, weil 0. Eintrag im Array
-    {1, 6, 0, 0, 0, 0},  // 2 //1 und 6, weil 1. und 6. Eintrag im Array
-    {0, 1, 6, 0, 0, 0},  // 3 // usw.
-    {1, 2, 5, 6, 0, 0},  // 4
-    {0, 1, 2, 5, 6, 0},  // 5  
-    {1, 2, 3, 4, 5, 6}   // 6
-};
-
-Adafruit_GC9A01A tft(TFT_CS, TFT_DC, TFT_RST);
-constexpr char kPromptLine1[] = "Spieler Rot";
-constexpr char kPromptLine2[] = "ist dran";
-
-enum class ScreenState { Prompt, Result };
-ScreenState screenState = ScreenState::Prompt;
-
-void showPlayerPrompt() {
-  tft.fillScreen(SCREEN_BG);
+void drawPrompt() {
+  tft.fillScreen(COLOR_BG);
   tft.setTextColor(GC9A01A_BLACK);
   tft.setTextSize(3);
 
+  const char *line1 = "Spieler Rot";
+  const char *line2 = "ist dran";
+
   int16_t x1, y1;
   uint16_t w1, h1;
-  tft.getTextBounds(kPromptLine1, 0, 0, &x1, &y1, &w1, &h1);
-  uint16_t w2, h2;
+  tft.getTextBounds(line1, 0, 0, &x1, &y1, &w1, &h1);
   int16_t x2, y2;
-  tft.getTextBounds(kPromptLine2, 0, 0, &x2, &y2, &w2, &h2);
+  uint16_t w2, h2;
+  tft.getTextBounds(line2, 0, 0, &x2, &y2, &w2, &h2);
 
-  int16_t line1Y = (tft.height() / 2) - h1;
-  int16_t line2Y = line1Y + h1 + 10;
+  int line1Y = (tft.height() / 2) - h1;
+  int line2Y = line1Y + h1 + 10;
 
   tft.setCursor((tft.width() - w1) / 2, line1Y);
-  tft.print(kPromptLine1);
+  tft.print(line1);
   tft.setCursor((tft.width() - w2) / 2, line2Y);
-  tft.print(kPromptLine2);
+  tft.print(line2);
 
-  screenState = ScreenState::Prompt;
+  showPromptScreen = true;
 }
 
-void drawDiceFace(uint8_t face) {
-  face = constrain(face, 1, 6);
+void drawDiceBackground() {
+  int originX = (tft.width() - DICE_SIZE) / 2;
+  int originY = (tft.height() - DICE_SIZE) / 2;
+  gridCenterX = originX + DICE_SIZE / 2;
+  gridCenterY = originY + DICE_SIZE / 2;
+  gridStep = DICE_SIZE / 4;
 
-  int16_t originX = (tft.width() - DICE_SIZE) / 2;
-  int16_t originY = (tft.height() - DICE_SIZE) / 2;
-  int16_t centerX = originX + DICE_SIZE / 2;
-  int16_t centerY = originY + DICE_SIZE / 2;
-  int16_t dotSpacing = DICE_SIZE / 4;
+  tft.fillRoundRect(originX, originY, DICE_SIZE, DICE_SIZE, DICE_CORNER_RADIUS, COLOR_DICE);
+  tft.drawRoundRect(originX, originY, DICE_SIZE, DICE_SIZE, DICE_CORNER_RADIUS, COLOR_DICE_BORDER);
+}
 
-  tft.fillRoundRect(originX, originY, DICE_SIZE, DICE_SIZE, DICE_CORNER_RADIUS, DICE_FILL_COLOR);
-  tft.drawRoundRect(originX, originY, DICE_SIZE, DICE_SIZE, DICE_CORNER_RADIUS, DICE_BORDER_COLOR);
+void drawDot(int dx, int dy) {
+  int x = gridCenterX + dx * gridStep;
+  int y = gridCenterY + dy * gridStep;
+  tft.fillCircle(x, y, DICE_DOT_RADIUS, COLOR_DICE_DOT);
+}
 
-  uint8_t dotCount = kFaceDotCounts[face - 1];
-  for (uint8_t i = 0; i < dotCount; ++i) {
-    uint8_t dotIndex = kFaceDotIndices[face - 1][i];
-    const DiceDotOffset &offset = kDiceDotOffsets[dotIndex];
-    int16_t px = centerX + offset.dx * dotSpacing;
-    int16_t py = centerY + offset.dy * dotSpacing;
-    tft.fillCircle(px, py, DICE_DOT_RADIUS, DICE_DOT_COLOR);
+void drawDiceFace(int face) {
+  drawDiceBackground();
+
+  if (face == 1) {
+    drawDot(0, 0);
+  } else if (face == 2) {
+    drawDot(-1, -1);
+    drawDot(1, 1);
+  } else if (face == 3) {
+    drawDot(-1, -1);
+    drawDot(0, 0);
+    drawDot(1, 1);
+  } else if (face == 4) {
+    drawDot(-1, -1);
+    drawDot(1, -1);
+    drawDot(-1, 1);
+    drawDot(1, 1);
+  } else if (face == 5) {
+    drawDot(-1, -1);
+    drawDot(1, -1);
+    drawDot(0, 0);
+    drawDot(-1, 1);
+    drawDot(1, 1);
+  } else if (face == 6) {
+    drawDot(-1, -1);
+    drawDot(1, -1);
+    drawDot(-1, 0);
+    drawDot(1, 0);
+    drawDot(-1, 1);
+    drawDot(1, 1);
   }
+
+  showPromptScreen = false;
 }
 
-uint8_t rollDice() {
-  uint8_t face = 1;
+void waitMs(int ms) {
+  delay(ms);
+}
 
-  tft.fillScreen(SCREEN_BG);
+void rollDiceAnimation() {
+  tft.fillScreen(COLOR_BG);
 
-  for (uint8_t step = 0; step < ROLL_STEPS; ++step) {
-    face = random(6) + 1;
-    drawDiceFace(face);
+  for (int i = 0; i < DICE_STEPS; i++) {
+    int value = random(6) + 1;
+    drawDiceFace(value);
 
-    uint16_t delayMs;
-    if (step >= ROLL_STEPS - 3) {
-      uint8_t slowIndex = step - (ROLL_STEPS - 3);
-      delayMs = FINAL_STEP_DELAYS_MS[slowIndex];
+    if (i < DICE_STEPS - 3) {
+      int stepDelay = map(i, 0, DICE_STEPS - 4, FAST_DELAY_MS, MEDIUM_DELAY_MS);
+      waitMs(stepDelay);
+    } else if (i == DICE_STEPS - 3) {
+      waitMs(SLOW_DELAY_1_MS);
+    } else if (i == DICE_STEPS - 2) {
+      waitMs(SLOW_DELAY_2_MS);
     } else {
-      delayMs = FRAME_DELAY_START_MS;
-      uint8_t rampSteps = (ROLL_STEPS > 3) ? (ROLL_STEPS - 3) : 1;
-      if (rampSteps > 1) {
-        delayMs += ((FRAME_DELAY_MID_MS - FRAME_DELAY_START_MS) * step) / (rampSteps - 1);
-      }
+      waitMs(SLOW_DELAY_3_MS);
     }
-    delay(delayMs);
   }
 
-  face = random(6) + 1;
-  drawDiceFace(face);
-  screenState = ScreenState::Result;
-  return face;
+  int finalValue = random(6) + 1;
+  drawDiceFace(finalValue);
+  Serial.printf("Spieler Rot: %d gewuerfelt\n", finalValue);
 }
 
 void setup() {
+  Serial.begin(115200);
   delay(100);
 
-  Serial.begin(115200);
-  SPI.begin(TFT_SCLK, -1, TFT_MOSI);
+  SPI.begin(PIN_TFT_SCLK, -1, PIN_TFT_MOSI);
   tft.begin(40000000);
   tft.setRotation(0);
 
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(PIN_BUTTON, INPUT_PULLUP);
   randomSeed(esp_random());
 
-  showPlayerPrompt();
+  drawPrompt();
 }
 
 void loop() {
   static bool lastButtonState = true;
-  bool currentState = digitalRead(BUTTON_PIN);
+  bool buttonNow = digitalRead(PIN_BUTTON);
 
-  if (!currentState && lastButtonState) {
-    if (screenState == ScreenState::Prompt) {
-      uint8_t result = rollDice();
-      Serial.printf("Spieler Rot: %u gewuerfelt\n", result);
+  if (!buttonNow && lastButtonState) {
+    if (showPromptScreen) {
+      rollDiceAnimation();
     } else {
-      showPlayerPrompt();
+      drawPrompt();
     }
   }
 
-  lastButtonState = currentState;
+  lastButtonState = buttonNow;
   delay(10);
 }
