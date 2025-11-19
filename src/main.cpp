@@ -51,6 +51,34 @@ constexpr uint8_t kFaceDotIndices[6][6] = {
 };
 
 Adafruit_GC9A01A tft(TFT_CS, TFT_DC, TFT_RST);
+constexpr char kPromptLine1[] = "Spieler Rot";
+constexpr char kPromptLine2[] = "ist dran";
+
+enum class ScreenState { Prompt, Result };
+ScreenState screenState = ScreenState::Prompt;
+
+void showPlayerPrompt() {
+  tft.fillScreen(SCREEN_BG);
+  tft.setTextColor(GC9A01A_BLACK);
+  tft.setTextSize(3);
+
+  int16_t x1, y1;
+  uint16_t w1, h1;
+  tft.getTextBounds(kPromptLine1, 0, 0, &x1, &y1, &w1, &h1);
+  uint16_t w2, h2;
+  int16_t x2, y2;
+  tft.getTextBounds(kPromptLine2, 0, 0, &x2, &y2, &w2, &h2);
+
+  int16_t line1Y = (tft.height() / 2) - h1;
+  int16_t line2Y = line1Y + h1 + 10;
+
+  tft.setCursor((tft.width() - w1) / 2, line1Y);
+  tft.print(kPromptLine1);
+  tft.setCursor((tft.width() - w2) / 2, line2Y);
+  tft.print(kPromptLine2);
+
+  screenState = ScreenState::Prompt;
+}
 
 void drawDiceFace(uint8_t face) {
   face = constrain(face, 1, 6);
@@ -77,6 +105,8 @@ void drawDiceFace(uint8_t face) {
 uint8_t rollDice() {
   uint8_t face = 1;
 
+  tft.fillScreen(SCREEN_BG);
+
   for (uint8_t step = 0; step < ROLL_STEPS; ++step) {
     face = random(6) + 1;
     drawDiceFace(face);
@@ -97,12 +127,14 @@ uint8_t rollDice() {
 
   face = random(6) + 1;
   drawDiceFace(face);
+  screenState = ScreenState::Result;
   return face;
 }
 
 void setup() {
   delay(100);
 
+  Serial.begin(115200);
   SPI.begin(TFT_SCLK, -1, TFT_MOSI);
   tft.begin(40000000);
   tft.setRotation(0);
@@ -110,8 +142,7 @@ void setup() {
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   randomSeed(esp_random());
 
-  tft.fillScreen(SCREEN_BG);
-  drawDiceFace(1);
+  showPlayerPrompt();
 }
 
 void loop() {
@@ -119,7 +150,12 @@ void loop() {
   bool currentState = digitalRead(BUTTON_PIN);
 
   if (!currentState && lastButtonState) {
-    rollDice();
+    if (screenState == ScreenState::Prompt) {
+      uint8_t result = rollDice();
+      Serial.printf("Spieler Rot: %u gewuerfelt\n", result);
+    } else {
+      showPlayerPrompt();
+    }
   }
 
   lastButtonState = currentState;
